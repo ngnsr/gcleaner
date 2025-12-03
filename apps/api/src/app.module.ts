@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import * as Joi from 'joi';
 import { GmailModule } from './gmail/gmail.module';
 import { AiModule } from './ai/ai.module';
+import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AiModule } from './ai/ai.module';
     }),
     GmailModule,
     AiModule,
+    PrismaModule,
   ],
 })
 export class AppModule {}

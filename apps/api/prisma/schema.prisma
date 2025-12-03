@@ -1,0 +1,33 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  accessToken  String?
+  refreshToken String?
+  emails       Email[]
+}
+
+model Email {
+  id              String   @id
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  from            String
+  subject         String
+  snippet         String?
+  date            DateTime
+  category        String?
+  suggestedAction String?
+  reasoning       String?
+  isAnalyzed      Boolean  @default(false)
+  isActioned      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+}

@@ -1,12 +1,16 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { google } from 'googleapis';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class GmailService {
   private oauth2Client: any;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     this.oauth2Client = new google.auth.OAuth2(
       this.configService.get<string>('GOOGLE_CLIENT_ID'),
       this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
@@ -33,54 +37,106 @@ export class GmailService {
     return google.gmail({ version: 'v1', auth: client });
   }
 
-  async listEmails(accessToken: string, maxResults = 10) {
-    if (!accessToken) {
-      throw new UnauthorizedException('Missing access token');
-    }
-
+  // 2. Logic: Uses the client to fetch and save.
+  async syncEmails(accessToken: string, userId: string, pageToken?: string) {
     const gmail = this.getUserClient(accessToken);
 
-    try {
-      const res = await gmail.users.messages.list({
-        userId: 'me',
-        maxResults,
+    // Pass the pageToken if we have one (to get the next page of history)
+    const res = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults: 20,
+      pageToken: pageToken,
+    });
+
+    const messages = res.data.messages || [];
+    let syncedCount = 0;
+
+    for (const msg of messages) {
+      if (!msg.id) continue;
+
+      // Check if exists
+      const exists = await this.prisma.email.findUnique({
+        where: { id: msg.id },
       });
 
-      const messages = res.data.messages || [];
+      if (exists) continue;
 
-      const validMessages = messages.filter((msg) => msg.id);
+      // Fetch details
+      try {
+        const detail = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id,
+          format: 'metadata',
+          metadataHeaders: ['From', 'Subject', 'Date'],
+        });
 
-      const emailDetails = await Promise.all(
-        validMessages.map(async (msg) => {
-          const messageId = msg.id as string;
+        const headers = detail.data.payload?.headers || [];
+        const from = headers.find((h) => h.name === 'From')?.value || 'Unknown';
+        const subject =
+          headers.find((h) => h.name === 'Subject')?.value || '(No Subject)';
+        const dateStr =
+          headers.find((h) => h.name === 'Date')?.value ||
+          new Date().toISOString();
 
-          const detail = await gmail.users.messages.get({
-            userId: 'me',
-            id: messageId,
-            format: 'metadata',
-            metadataHeaders: ['From', 'Subject', 'Date'],
-          });
-
-          const headers = detail.data.payload?.headers || [];
-
-          const from = headers.find((h) => h.name === 'From')?.value || '';
-          const subject =
-            headers.find((h) => h.name === 'Subject')?.value || '';
-          const date = headers.find((h) => h.name === 'Date')?.value || '';
-
-          return {
-            id: messageId,
+        await this.prisma.email.create({
+          data: {
+            id: msg.id,
             from,
             subject,
-            date,
-          };
-        }),
-      );
-
-      return emailDetails;
-    } catch (error) {
-      console.error('Gmail API Error:', error);
-      throw new UnauthorizedException('Invalid or expired token');
+            snippet: detail.data.snippet || '',
+            date: new Date(dateStr),
+            user: {
+              connectOrCreate: {
+                where: { id: userId },
+                create: { id: userId, email: 'placeholder@user.com' },
+              },
+            },
+          },
+        });
+        syncedCount++;
+      } catch (e) {
+        console.error(`Failed to sync msg ${msg.id}`, e);
+      }
     }
+
+    // Return the token for the NEXT page of history
+    return {
+      synced: syncedCount,
+      nextPageToken: res.data.nextPageToken,
+    };
+  }
+
+  async getLocalEmails(userId: string, page: number, category?: string) {
+    const take = 10;
+    const skip = (page - 1) * take;
+
+    const whereClause: any = { userId };
+
+    if (category && category !== 'All') {
+      whereClause.category = category;
+    }
+
+    const [emails, total] = await this.prisma.$transaction([
+      this.prisma.email.findMany({
+        where: whereClause,
+        take,
+        skip,
+        orderBy: { date: 'desc' },
+      }),
+      this.prisma.email.count({ where: whereClause }),
+    ]);
+
+    return { data: emails, total, page };
+  }
+
+  async getUserCategories(userId: string) {
+    const categories = await this.prisma.email.findMany({
+      where: { userId, category: { not: null } },
+      select: { category: true },
+      distinct: ['category'],
+      orderBy: { category: 'asc' },
+    });
+
+    return categories.map((c) => c.category).filter(Boolean);
   }
 }
