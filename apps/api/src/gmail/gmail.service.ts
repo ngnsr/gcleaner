@@ -19,7 +19,7 @@ export class GmailService {
   }
 
   getAuthUrl(): string {
-    const scopes = ['https://www.googleapis.com/auth/gmail.readonly'];
+    const scopes = ['https://www.googleapis.com/auth/gmail.modify'];
     return this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
@@ -138,5 +138,47 @@ export class GmailService {
     });
 
     return categories.map((c) => c.category).filter(Boolean);
+  }
+
+  async performBatchAction(
+    accessToken: string,
+    userId: string,
+    ids: string[],
+    action: 'archive' | 'delete',
+  ) {
+    const gmail = this.getUserClient(accessToken);
+
+    try {
+      if (action === 'delete') {
+        await gmail.users.messages.batchModify({
+          userId: 'me',
+          requestBody: {
+            ids: ids,
+            addLabelIds: ['TRASH'],
+            removeLabelIds: ['INBOX'],
+          },
+        });
+      } else if (action === 'archive') {
+        await gmail.users.messages.batchModify({
+          userId: 'me',
+          requestBody: {
+            ids: ids,
+            removeLabelIds: ['INBOX'],
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Gmail API Error during batch action:', error);
+      throw new UnauthorizedException('Failed to communicate with Gmail');
+    }
+
+    await this.prisma.email.deleteMany({
+      where: {
+        userId,
+        id: { in: ids },
+      },
+    });
+
+    return { success: true, count: ids.length };
   }
 }

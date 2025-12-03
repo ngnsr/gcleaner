@@ -53,3 +53,16 @@ export async function getLocalEmails(page = 1, category = "All") {
   });
   return res.data;
 }
+
+export async function performBatchAction(
+  ids: string[],
+  action: "archive" | "delete"
+) {
+  const token = getToken();
+  const res = await axios.post(
+    `${API_BASE}/gmail/batch-action`,
+    { ids, action },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return res.data;
+}

@@ -6,6 +6,8 @@ import {
   UnauthorizedException,
   UsePipes,
   ValidationPipe,
+  Post,
+  Body,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiQuery } from '@nestjs/swagger';
 import { GmailService } from './gmail.service';
@@ -76,6 +78,23 @@ export class GmailController {
       CURRENT_USER_ID,
       Number(page),
       category,
+    );
+  }
+
+  @Post('batch-action')
+  @ApiOperation({ summary: 'Archive or Delete multiple emails' })
+  async batchAction(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { ids: string[]; action: 'archive' | 'delete' },
+  ) {
+    if (!authHeader) throw new UnauthorizedException('No Access Token');
+    const token = authHeader.replace('Bearer ', '');
+
+    return this.gmailService.performBatchAction(
+      token,
+      CURRENT_USER_ID,
+      body.ids,
+      body.action,
     );
   }
 }
